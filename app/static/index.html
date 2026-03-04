@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hysteria Web Panel v0.2</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #0b1220; color: #e5e7eb; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    h1, h2 { margin: 0 0 12px 0; }
+    input, button { padding: 8px 10px; border-radius: 8px; border: 1px solid #374151; background: #0f172a; color: #e5e7eb; }
+    button { cursor: pointer; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .muted { color: #94a3b8; font-size: 14px; }
+    .ok { color: #22c55e; }
+    .bad { color: #ef4444; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #1f2937; padding: 8px; }
+    .hidden { display: none; }
+    a { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <h1>Hysteria Web Panel v0.3</h1>
+
+  <div id="loginCard" class="card">
+    <h2>Вход</h2>
+    <div class="row">
+      <input id="username" placeholder="admin" />
+      <input id="password" type="password" placeholder="password" />
+      <button onclick="login()">Войти</button>
+    </div>
+    <p id="loginMsg" class="muted"></p>
+  </div>
+
+  <div id="appCard" class="hidden">
+    <div class="card">
+      <h2>Состояние</h2>
+      <p id="svcStatus" class="muted">service: ...</p>
+      <p id="sysStatus" class="muted">cpu/mem: ...</p>
+      <p id="netStatus" class="muted">rx/tx: ...</p>
+      <div class="row">
+        <button onclick="refreshStatus()">Обновить</button>
+        <button onclick="restartHy2()">Restart HY2</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Добавить пользователя</h2>
+      <div class="row">
+        <input id="newUser" placeholder="User" />
+        <input id="newPass" placeholder="password/token" />
+        <input id="newDays" type="number" value="30" min="0" max="3650" style="width:110px" />
+        <label><input id="newPermanent" type="checkbox" /> Бессрочно</label>
+        <button onclick="createUser()">Создать</button>
+      </div>
+      <p id="createMsg" class="muted"></p>
+    </div>
+
+    <div class="card">
+      <h2>Пользователи</h2>
+      <table>
+        <thead><tr><th>User</th><th>Срок</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+      <p id="actionMsg" class="muted"></p>
+      <p class="muted">`Link` откроет hy2 URI, `YAML` скачает профиль, `QR` откроет картинку.</p>
+    </div>
+  </div>
+
+  <script>
+    let token = "";
+
+    async function api(path, opts = {}) {
+      const headers = opts.headers || {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const resp = await fetch(path, { ...opts, headers });
+      if (!resp.ok) {
+        let detail = "";
+        try { detail = JSON.stringify(await resp.json()); } catch {}
+        throw new Error(`${resp.status} ${resp.statusText} ${detail}`);
+      }
+      return resp;
+    }
+
+    async function login() {
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      const msg = document.getElementById("loginMsg");
+      msg.textContent = "Вход...";
+      try {
+        const resp = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        if (!resp.ok) throw new Error("Неверный логин или пароль");
+        const data = await resp.json();
+        token = data.access_token;
+        document.getElementById("loginCard").classList.add("hidden");
+        document.getElementById("appCard").classList.remove("hidden");
+        await refreshStatus();
+        await refreshUsers();
+      } catch (e) {
+        msg.textContent = String(e.message || e);
+      }
+    }
+
+    async function refreshStatus() {
+      const svc = await (await api("/api/hysteria/status")).json();
+      const sys = await (await api("/api/system/status")).json();
+      document.getElementById("svcStatus").innerHTML = `Service: <b>${svc.active_state}</b>`;
+      document.getElementById("sysStatus").textContent =
+        `CPU ${sys.cpu_percent}% | RAM ${sys.memory.used_mb}/${sys.memory.total_mb} MB (${sys.memory.percent}%) | Uptime ${sys.uptime_seconds}s`;
+      document.getElementById("netStatus").textContent =
+        `Сеть сейчас: RX ${sys.network.rx_mbps} Mbps | TX ${sys.network.tx_mbps} Mbps | Итого RX ${sys.network.total_recv_mb} MB / TX ${sys.network.total_sent_mb} MB`;
+    }
+
+    async function restartHy2() {
+      try {
+        const data = await (await api("/api/hysteria/restart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ restart_service: true })
+        })).json();
+        showActionMsg(`HY2 restart: ${data.message || (data.ok ? "OK" : "fail")}`, !data.ok);
+        await refreshStatus();
+      } catch (e) {
+        showActionMsg(String(e.message || e), true);
+      }
+    }
+
+    async function createUser() {
+      const username = document.getElementById("newUser").value.trim();
+      const password = document.getElementById("newPass").value.trim();
+      const days = Number(document.getElementById("newDays").value || 30);
+      const permanent = document.getElementById("newPermanent").checked;
+      const msg = document.getElementById("createMsg");
+      if (!username || !password) {
+        msg.textContent = "Введите username и password";
+        return;
+      }
+      try {
+        const resp = await api("/api/hysteria/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password, days, permanent, restart_service: true })
+        });
+        const data = await resp.json();
+        msg.textContent = "Пользователь создан. Открой Link или скопируй hy2:// по кнопке Link.";
+        await refreshUsers();
+      } catch (e) {
+        msg.textContent = String(e.message || e);
+      }
+    }
+
+    function showActionMsg(text, isError = false) {
+      const el = document.getElementById("actionMsg");
+      el.textContent = text;
+      el.className = isError ? "bad" : "muted";
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function downloadYamlForUser(user) {
+      const resp = await api(`/api/hysteria/users/${encodeURIComponent(user)}/yaml`);
+      const content = await resp.text();
+      if (!content || !content.trim()) {
+        throw new Error("Пустой YAML от сервера");
+      }
+      const blob = new Blob([content], { type: "text/yaml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${user}.yaml`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showActionMsg(`YAML сохранен: ${user}.yaml`);
+    }
+
+    async function openQrForUser(user) {
+      const resp = await api(`/api/hysteria/users/${encodeURIComponent(user)}/qr`);
+      const blob = await resp.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error("Пустой QR ответ от сервера");
+      }
+      const url = URL.createObjectURL(blob);
+      const win = window.open("", "_blank");
+      if (!win) {
+        showActionMsg("Браузер блокирует всплывающие окна. Разреши pop-up.", true);
+        return;
+      }
+      win.document.write(
+        `<title>QR ${user}</title><div style="font-family:Arial,sans-serif;padding:12px;">` +
+        `<h3>QR для ${user}</h3><img src="${url}" style="max-width:100%;height:auto;" /></div>`
+      );
+      showActionMsg(`QR открыт для пользователя: ${user}`);
+    }
+
+    async function refreshUsers() {
+      const body = document.getElementById("usersBody");
+      body.innerHTML = "";
+      const data = await (await api("/api/hysteria/users")).json();
+      for (const userItem of data.users) {
+        const user = userItem.username;
+        const tr = document.createElement("tr");
+        const tdUser = document.createElement("td");
+        tdUser.textContent = user;
+
+        const tdExpiry = document.createElement("td");
+        tdExpiry.textContent = userItem.permanent ? "Бессрочно" : (userItem.days_left != null ? `${userItem.days_left} дн.` : "n/a");
+
+        const tdState = document.createElement("td");
+        tdState.textContent = userItem.active ? "active" : "inactive";
+        tdState.className = userItem.active ? "ok" : "bad";
+
+        const tdActions = document.createElement("td");
+        tdActions.className = "row";
+
+        const linkBtn = document.createElement("button");
+        linkBtn.textContent = "Link";
+        linkBtn.onclick = async () => {
+          try {
+            const res = await (await api(`/api/hysteria/users/${encodeURIComponent(user)}/link`)).json();
+            const copied = await copyToClipboard(res.hy2_link);
+            showActionMsg(copied ? `hy2:// скопирован для ${user}` : `hy2:// для ${user}: ${res.hy2_link}`);
+            // Attempt open for systems with registered hy2 handler.
+            window.location.href = res.hy2_link;
+          } catch (e) {
+            showActionMsg(String(e.message || e), true);
+          }
+        };
+
+        const yamlBtn = document.createElement("button");
+        yamlBtn.textContent = "YAML";
+        yamlBtn.onclick = async () => {
+          try {
+            await downloadYamlForUser(user);
+          } catch (e) {
+            showActionMsg(String(e.message || e), true);
+          }
+        };
+
+        const qrBtn = document.createElement("button");
+        qrBtn.textContent = "QR";
+        qrBtn.onclick = async () => {
+          try {
+            await openQrForUser(user);
+          } catch (e) {
+            showActionMsg(String(e.message || e), true);
+          }
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "Delete";
+        delBtn.onclick = async () => {
+          if (!confirm(`Delete user ${user}?`)) return;
+          await api("/api/hysteria/users", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: user, restart_service: true })
+          });
+          await refreshUsers();
+        };
+
+        const plusBtn = document.createElement("button");
+        plusBtn.textContent = "+30d";
+        plusBtn.onclick = async () => {
+          await api("/api/hysteria/users/access", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: user, add_days: 30, restart_service: true })
+          });
+          await refreshUsers();
+        };
+
+        const minusBtn = document.createElement("button");
+        minusBtn.textContent = "-30d";
+        minusBtn.onclick = async () => {
+          await api("/api/hysteria/users/access", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: user, add_days: -30, restart_service: true })
+          });
+          await refreshUsers();
+        };
+
+        const foreverBtn = document.createElement("button");
+        foreverBtn.textContent = userItem.permanent ? "Ограничить" : "Бессрочно";
+        foreverBtn.onclick = async () => {
+          await api("/api/hysteria/users/access", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: user, permanent: !userItem.permanent, restart_service: true })
+          });
+          await refreshUsers();
+        };
+
+        tdActions.append(linkBtn, yamlBtn, qrBtn, plusBtn, minusBtn, foreverBtn, delBtn);
+        tr.append(tdUser, tdExpiry, tdState, tdActions);
+        body.appendChild(tr);
+      }
+    }
+  </script>
+</body>
+</html>
