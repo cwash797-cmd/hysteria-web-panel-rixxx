@@ -19,8 +19,8 @@ Deploy a self-hosted web panel that manages Hysteria2 users and generates:
 After publishing this repo to GitHub, installation can be done with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<your-org>/<your-repo>/main/scripts/install.sh | \
-sudo REPO_URL="https://github.com/<your-org>/<your-repo>.git" \
+curl -fsSL https://raw.githubusercontent.com/cwash797-cmd/hysteria-web-panel-rixxx/main/scripts/install.sh | \
+sudo REPO_URL="https://github.com/cwash797-cmd/hysteria-web-panel-rixxx.git" \
 HWP_PUBLIC_DOMAIN="gprime.mooo.com" \
 bash
 ```

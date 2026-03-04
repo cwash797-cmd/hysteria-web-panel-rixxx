@@ -16,6 +16,14 @@
 - Генерация QR-кода
 - Интеграционный endpoint для ботов: `POST /add-client` с `X-API-Key`
 
+## Скриншоты
+
+Добавляйте изображения в `docs/images/` и вставляйте ссылки в README:
+
+```md
+![Panel UI](docs/images/panel-ui-v03.png)
+```
+
 ## Быстрый старт (локально/dev)
 
 1. Создать и активировать виртуальное окружение:
@@ -63,8 +71,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 После публикации репозитория на GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<your-org>/<your-repo>/main/scripts/install.sh | \
-sudo REPO_URL="https://github.com/<your-org>/<your-repo>.git" \
+curl -fsSL https://raw.githubusercontent.com/cwash797-cmd/hysteria-web-panel-rixxx/main/scripts/install.sh | \
+sudo REPO_URL="https://github.com/cwash797-cmd/hysteria-web-panel-rixxx.git" \
 HWP_PUBLIC_DOMAIN="gprime.mooo.com" \
 bash
 ```
@@ -140,8 +148,8 @@ Description=Hysteria Web Panel
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/HysteriaWebPanel
-ExecStart=/opt/HysteriaWebPanel/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+WorkingDirectory=/opt/hysteria-web-panel
+ExecStart=/opt/hysteria-web-panel/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
 Restart=always
 User=root
 
